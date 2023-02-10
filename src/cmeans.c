@@ -3,15 +3,18 @@
 #include <stdlib.h>
 #include <math.h>
 #include <R.h>
+#include <R_ext/Lapack.h>
 
 /* Enhance readability of matrix-subscripting for matrices stored in
-   row-major order. */
+   row-major order. 
+   n is the number of columns, i is row index, j is column index*/
 #define MSUB(x, i, j, n)	x[(i) + (n) * (j)]
 
-static double *d;
-static double *dwrk, *dwrk_x, *dwrk_w;
-static int *iwrk;
+static double *d; /* Global variable for storing dissimilarities? */
+static double *dwrk, *dwrk_x, *dwrk_w; /* Global variables for weighted median. */
+static int *iwrk; /* Global variable for weighted median. */
 
+/* setting up the arrays. */
 static void
 cmeans_setup(int nr_x, int nr_p, int dist)
 {
@@ -47,12 +50,23 @@ cmeans_delta_old_new(double *old, double *new, int len)
 }
 */
 
+/*returns sign of input*/
 static int
 cmeans_sign(double x)
 {
     if(x == 0) return(0);
     return((x > 0) ? 1 : -1);
 }
+
+
+/* function that computes the weighted median of an array x with weights w of length len. 
+The function first sorts x in ascending order and permutes w accordingly using the sorting index. 
+The function then normalizes w by dividing each weight by the sum of all weights.
+
+The weighted median is found by computing a cumulative sum of the weights and the cumulative product of the weights and values, 
+and then finding the value x[i] that minimizes x[i] * (cumsum_w - .5) - cumsum_w_x. The resulting value marg is the weighted median.
+
+Finally, the function returns the weighted median marg.*/
 
 static double
 cmeans_weighted_median(double *x, double *w, int len)
@@ -93,6 +107,8 @@ cmeans_weighted_median(double *x, double *w, int len)
 
 /* Update the dissimilarities (between objects and prototypes) for a
  * single object (i.e., a single row of the dissimilarity matrix. */
+
+/*
 static void
 ufcl_dissimilarities(double *x, double *p,
 		     int nr_x, int nc, int nr_p,
@@ -114,6 +130,46 @@ ufcl_dissimilarities(double *x, double *p,
     }
 }
 
+*/
+
+/* NEW - rewrite the above ufcl_dissimilarities functions, but instead of euclidean distance calculate the pearson coefficient score between the row ix and the row ip */ 
+
+static void
+ufcl_dissimilarities(double *x, double *p,
+int nr_x, int nc, int nr_p,
+int dist, int ix, double *d)
+{
+	int ip, j;
+	double x_mean, p_mean, x_var, p_var, x_std, p_std, numerator, denominator;
+	for(ip = 0; ip < nr_p; ip++) {
+		x_mean = p_mean = 0;
+		x_var = p_var = 0;
+		numerator = 0;
+
+    	for(j = 0; j < nc; j++) {
+        x_mean += MSUB(x, ix, j, nr_x);
+        p_mean += MSUB(p, ip, j, nr_p);
+    	}
+		x_mean /= nc;
+		p_mean /= nc;
+
+		for(j = 0; j < nc; j++) {
+			x_var += pow(MSUB(x, ix, j, nr_x) - x_mean, 2);
+			p_var += pow(MSUB(p, ip, j, nr_p) - p_mean, 2);
+			numerator += (MSUB(x, ix, j, nr_x) - x_mean) * (MSUB(p, ip, j, nr_p) - p_mean);
+		}
+		x_var /= nc;
+		p_var /= nc;
+		x_std = sqrt(x_var);
+		p_std = sqrt(p_var);
+		denominator = x_std * p_std;
+
+		MSUB(d, ix, ip, nr_x) = 1 - pow(numerator / denominator, 2);
+	}
+}
+
+
+/*calculates the dissimilarities between each row of the input data matrix x and each row of the parameter matrix p. */
 static void
 cmeans_dissimilarities(double *x, double *p,
 		       int nr_x, int nc, int nr_p,
@@ -129,6 +185,8 @@ cmeans_dissimilarities(double *x, double *p,
 
 /* Update the memberships for a single object (i.e., a single row of the
  * membership matrix.) */
+
+/* a function that calculates the membership of an object in a given number of clusters (specified by nr_p)*/
 static void
 ufcl_memberships(double *d, int nr_x, int nr_p,
 		 double exponent, int ix,
@@ -161,6 +219,7 @@ ufcl_memberships(double *d, int nr_x, int nr_p,
 	    MSUB(u, ix, ip, nr_x) /= sum;
     }
 }
+
 
 static void
 cmeans_memberships(double *d,
@@ -335,3 +394,4 @@ ufcl(double *x, int *nr_x, int *nc, double *p, int *nr_p, double *w,
 
     *ermin = new_value;
 }	
+
